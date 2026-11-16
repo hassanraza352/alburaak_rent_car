@@ -1,0 +1,19 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { loadCars } from '../lib/cars.js';
+import { ADMIN_USER, logout } from '../lib/auth.js';
+import { api } from '../lib/api.js';
+export default function AdminLayout() {
+ const navigate=useNavigate();const {pathname}=useLocation();
+ const [cars,setCars]=useState([]);const [bookings,setBookings]=useState([]);const [settings,setSettings]=useState({});
+ const [loading,setLoading]=useState(true);const [toast,setToast]=useState({msg:'',type:'ok',show:false});const timer=useRef(null);
+ const notify=useCallback((msg,type='ok')=>{setToast({msg,type,show:true});clearTimeout(timer.current);timer.current=setTimeout(()=>setToast(t=>({...t,show:false})),3000);},[]);
+ const refresh=useCallback(async()=>{const [c,b,s]=await Promise.all([api.getCars(),api.getBookings(),api.getSettings()]);setCars(c);setBookings(b);setSettings(s);},[]);
+ useEffect(()=>{(async()=>{try{let existing=await api.getCars();if(existing.length===0){let legacy=[];try{legacy=JSON.parse(localStorage.getItem('ab_cars')||'null')||[];}catch{}if(!Array.isArray(legacy)||legacy.length===0)legacy=loadCars();const migrated=[];for(const car of legacy){let copy={...car};if(typeof copy.img==='string'&&copy.img.startsWith('data:')){try{const blob=await(await fetch(copy.img)).blob();const file=new File([blob],`legacy-car-${car.id||Date.now()}.jpg`,{type:blob.type||'image/jpeg'});const uploaded=await api.uploadImage(file);copy.img=uploaded.url;}catch{copy.img='/images/car.jpg';}}migrated.push(copy);}try{await api.importCars(migrated);}catch(importError){const check=await api.getCars();if(!check.length)throw importError;}localStorage.removeItem('ab_cars');}await refresh();}catch(e){notify(e.message,'err');}finally{setLoading(false);}})();return()=>clearTimeout(timer.current);},[refresh,notify]);
+ const commit=useCallback(async(next)=>{try{const oldIds=new Set(cars.map(c=>String(c.id)));const newIds=new Set(next.map(c=>String(c.id)));for(const old of cars)if(!newIds.has(String(old.id)))await api.deleteCar(old.id);for(const item of next){const payload={...item};delete payload.id;delete payload._id;delete payload.createdAt;delete payload.updatedAt;if(oldIds.has(String(item.id)))await api.updateCar(item.id,payload);else await api.createCar(payload);}await refresh();return true;}catch(e){notify(e.message,'err');return false;}},[cars,refresh,notify]);
+ const title=pathname.startsWith('/admin/cars')?'Cars':pathname.startsWith('/admin/bookings')?'Bookings':pathname.startsWith('/admin/settings')?'Settings':'Dashboard';
+ const onLogout=()=>{logout();navigate('/admin/login',{replace:true});};
+ return <div className="admin-app"><div className="layout"><aside className="sidebar"><div className="side-brand"><img src="/assets/logo.png" alt="Al Buraak"/><span>Admin</span></div><nav className="side-nav"><NavLink end to="/admin" className="nav-link">📊 Dashboard</NavLink><NavLink to="/admin/cars" className="nav-link">🚗 Cars</NavLink><NavLink to="/admin/bookings" className="nav-link">📅 Bookings</NavLink>
+ {/* <NavLink to="/admin/settings" className="nav-link">⚙️ Settings</NavLink> */}
+ </nav><div className="side-foot"><a href="/" target="_blank" rel="noopener">View website ↗</a><button className="btn-sm" type="button" onClick={onLogout}>Log out</button></div></aside><main className="main"><header className="topbar"><h1>{title}</h1><span className="who">Signed in as <b>{ADMIN_USER}</b></span></header>{loading?<section className="view"><div className="card">Loading dashboard data…</div></section>:<Outlet context={{cars,bookings,settings,commit,refresh,notify,setSettings}}/>}</main></div><div className={`toast ${toast.show?'show':''} ${toast.type==='err'?'err':''}`} role="status">{toast.msg}</div></div>;
+}
